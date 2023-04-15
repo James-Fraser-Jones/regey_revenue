@@ -1,10 +1,11 @@
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.wait import WebDriverWait
-from selenium.common.exceptions import NoSuchElementException
-
 from selenium.webdriver.firefox.service import Service as FirefoxService
 from selenium.webdriver.firefox.options import Options
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
+
 from webdriver_manager.firefox import GeckoDriverManager
 
 import csv
@@ -23,108 +24,94 @@ def csv_test():
             for row in csvreader:
                 csvwriter.writerow([row[0], row[1]])
 
-#this was used to generate regey_tokens.csv in order to create a frequency distribution 
+#this was used to generate "regey_tokens.csv" in order to create a frequency distribution 
 #this distribution was then used to create an effective token_filter_list
 def get_all_tokens():
     with open('regey_data.csv', newline='') as csvfilein:
         csvreader = csv.reader(csvfilein)
-        with open('regey_tokens.csv', 'w') as csvfileout:
+        with open('regey_tokens.csv', 'w', newline='') as csvfileout:
+            csvwriter = csv.writer(csvfileout)
             for row in csvreader:
                 tokens = get_org_tokens(row[0])
                 for token in tokens:
-                    csvfileout.write(f"{token} ")
+                    csvwriter.writerow([token])
 
+#used to generate "regey_dist.csv" file with frequency distribution of tokens
+def get_freq_dist():
+    dist = {}
+    with open('regey_tokens.csv', newline='') as csvfilein:
+        csvreader = csv.reader(csvfilein)
+        for row in csvreader:
+            if len(row) == 0:
+                continue
+            token = row[0]
+            if token == "":
+                continue
+            if token in dist:
+                dist[token] += 1
+            else:
+                dist[token] = 1
+    with open('regey_dist.csv', 'w', newline='') as csvfileout:
+        csvwriter = csv.writer(csvfileout)
+        for token in sorted(dist, key=dist.get, reverse=True):
+            count = dist[token]
+            csvwriter.writerow([token, count])
+        
 #=================================================================
 #main
 
 def search(driver, org, foundation):
     if foundation:
-        #maybe we should replace spaces with "+"s in org before searching...
         driver.get(f"https://www.google.com/search?q={org}+990+propublica")
 
     else:
-        driver.get(f"https://www.google.com/search?q={org}+annual+revenue+zoominfo")
+        results = google_search(driver, f"{org} annual revenue zoominfo", 10)
 
-        results_element = driver.find_element(by=By.ID, value="rso")
-        results = results_element.find_elements(by=By.XPATH, value="*")
-
-        zoom_results = []
+        result_infos = []
         for result in results:
             try:
-                cite = result.find_element(by=By.TAG_NAME, value="cite")
+                link = result.find_element(by=By.TAG_NAME, value="a")
             except NoSuchElementException:
                 continue
-            url_string = cite.text
-            if (url_string != ""):
-                url_tokens = url_string.split(" › ")
-                if url_tokens[0] == "https://www.zoominfo.com":
-                    zoom_results.append((result, url_tokens[1]))
-        
-        if len(zoom_results) == 0:
-            return {"url": "", "revenue": 0}
 
-        counts = []
-        for entry in zoom_results:
-            result = entry[0]
-            zoom_token = entry[1]
-            org_tokens = get_filtered_org_tokens(org)
-            count = 0
-            for org_token in org_tokens:
-                if org_token in zoom_token:
-                    count += 1
-            counts.append(count)
+            url = link.get_attribute("href")
 
-        filtered_results = []
-        max_count = max(counts)
-        for i in range(len(counts)):
-            count = counts[i]
-            zoom_result = zoom_results[i][0]
-            if count == max_count:
-                filtered_results.append(zoom_result)
-
-        result_dicts = []
-        for result in filtered_results:
-            result_dict = {}
-            result_dict["url"] = result.find_element(by=By.TAG_NAME, value="a").get_attribute("href")
-            result_dict["list"] = []
-
-            rev_groups = rev_regex_grouped.findall(result.text)
             rev_strings = rev_regex.findall(result.text)
-
+            rev_groups = rev_regex_grouped.findall(result.text)
+            if len(rev_strings) == 0:
+                continue
+    
+            rev_str = ""
+            rev_num = 0        
             for i in range(len(rev_groups)):
-                rev_group = rev_groups[i]
-                rev_string = rev_strings[i]
+                cur_rev_str = rev_strings[i]
+                cur_rev_group = rev_groups[i]
+                cur_rev_num = get_rev_number(cur_rev_group)
+                if cur_rev_num > rev_num:
+                    rev_num = cur_rev_num
+                    rev_str = cur_rev_str
 
-                revenue = float(rev_group[1])
-
-                match rev_group[2]:
-                    case "K":
-                        revenue *= 1000
-                    case "M":
-                        revenue *= 1000000
-                    case "B":
-                        revenue *= 1000000000
-                if rev_group[0] == "<":
-                    revenue *= 0.8
-
-                group_dict = {}
-                group_dict["rev_string"] = rev_string
-                group_dict["revenue"] = revenue
-                result_dict["list"].append(group_dict)
-
-            result_dicts.append(result_dict)
+            result_infos.append({"org": org, "url": url, "rev_str": rev_str, "rev_num": rev_num})
         
-        max_url = ""
-        max_string = ""
-        max_revenue = 0
-        for result_dict in result_dicts:
-            for rev in result_dict["list"]:
-                if rev["revenue"] > max_revenue:
-                    max_url = result_dict["url"]
-                    max_string = rev["rev_string"]
-                    max_revenue = rev["revenue"]
+        dist = make_dist()
+        best_result = None
+        best_match_score = 0
+        for result_info in result_infos:
+            url = result_info["url"]
+            if not "https://www.zoominfo.com/c/" in url:
+                continue
 
-        return {"url": max_url, "revenue": max_revenue}
+            zoom_org = url.split("/")[4]
+            zoom_org_tokens = get_org_tokens(zoom_org)
+            org_tokens = get_org_tokens(org)
+            match_score = get_match_score(dist, org_tokens, zoom_org_tokens)
+            print(f"{org_tokens}, {zoom_org_tokens}, {match_score}")
+            if match_score > best_match_score:
+                best_match_score = match_score
+                best_result = result_info
+        
+        best_result["match_score"] = best_match_score
+        return best_result
 
 def run_single(chosen_org):
     with open('regey_data.csv', newline='') as csvfilein:
@@ -134,18 +121,8 @@ def run_single(chosen_org):
             if org == chosen_org:
                 driver = get_driver()
                 foundation = row[1] == "TRUE"
-                
-                if not foundation:
-                    result = search(driver, org, False)
-                    if not result["url"] == "":
-                        print([org, result["url"], result["revenue"]])
-                    else:
-                        print([org, "ERROR: empty url"])
-                else:
-                    print([org, "ERROR: foundation"])
-
+                print(search(driver, chosen_org, foundation))
                 return
-            
     print("ERROR: org not found")
 
 def run(filter="", limit=math.inf):
@@ -172,25 +149,9 @@ def run(filter="", limit=math.inf):
                     if not result["url"] == "":
                         csvwriter.writerow([org, result["url"], result["revenue"]])
                     else:
-                        csvwriter.writerow([org, "ERROR: empty url"])
+                        csvwriter.writerow([org, "ERROR: no zoom results"])
                 else:
                     csvwriter.writerow([org, "ERROR: foundation"])
-
-#=================================================================
-#get_filtered_org_tokens
-
-#based on frequency distribution generated from regey_tokens.csv
-token_filter_list = ["foundation","the","inc","group","of","association","and","fund","for","llp","llc","international","corporation","company","co"]
-
-#lowercases org (first column in regey_data.csv) and then splits on all non alpha-numeric characters
-def get_org_tokens(org):
-    lower_org = org.lower()
-    tokens = re.findall(r'\w+', lower_org)
-    return tokens
-
-#runs get_org_tokens on org (first column in regey_data.csv) and removes any which belong to token_filter_list
-def get_filtered_org_tokens(org):
-    return list(filter(lambda token : not token in token_filter_list, get_org_tokens(org)))
 
 #=================================================================
 #revenue regexes
@@ -209,6 +170,8 @@ def get_filtered_org_tokens(org):
 rev_regex = re.compile(r'<?\$\d+(?:\.\d+)? ?(?:K|M|B)')
 rev_regex_grouped = re.compile(r'(<?)\$(\d+(?:\.\d+)?) ?(K|M|B)')
 
+org_token_regex = re.compile(r'\w+')
+
 #=================================================================
 #utils
 
@@ -218,14 +181,69 @@ def get_driver(headless=False):
     driver = webdriver.Firefox(options=options, service=FirefoxService(GeckoDriverManager().install()))
     return driver
 
+#performs a google search and waits for results before returning them
+def google_search(driver, search_string, wait):
+    driver.get("https://www.google.com/")
+    search_box = driver.find_element(by=By.ID, value="APjFqb")
+    search_box.send_keys(search_string)
+    search_box.send_keys(Keys.ENTER)
+    try:
+        results_element = WebDriverWait(driver, wait).until(lambda x: x.find_element(by=By.ID, value="rso"))
+        results = results_element.find_elements(by=By.XPATH, value="*") #gets all direct children of an element
+    except TimeoutException:
+        results = []
+    return results
+
+#produces revenue number from rev_group regex match
+def get_rev_number(rev_group):
+    rev_number = float(rev_group[1])
+    match rev_group[2]:
+        case "K":
+            rev_number *= 1000
+        case "M":
+            rev_number *= 1000000
+        case "B":
+            rev_number *= 1000000000
+    if rev_group[0] == "<":
+        rev_number *= 0.8 #this simply ensures that the revenue will be grouped into the lower range bracket
+    return round(rev_number, 2)
+
+#lowercases org (first column in regey_data.csv) and then splits on all non alpha-numeric characters
+def get_org_tokens(org):
+    lower_org = org.lower()
+    tokens = org_token_regex.findall(lower_org)
+    return tokens
+
+#produces match score by sum totalling the scores (based on inverse frequency from distribution) of all token matches
+def get_match_score(dist, org_tokens, zoom_org_tokens):
+    match_score = 0 
+    for org_token in org_tokens:
+        if org_token in zoom_org_tokens:
+            match_score += 98 - dist[org_token]
+    return match_score
+
+#turns "regey_dist.csv" into lookup table (i.e. a dictionary) and returns it
+def make_dist():
+    dist = {}
+    with open('regey_dist.csv', newline='') as csvfilein:
+        csvreader = csv.reader(csvfilein)
+        for row in csvreader:
+            dist[row[0]] = int(row[1])
+    return dist
 #=================================================================
 #scratch
 
 #run(limit=20)
-#run(filter="company", limit=20)
+#run(filter="company", limit=200)
 #run(filter="foundation", limit=20)
 
 #run_single("AmWell")
 #run_single("Josiah Macy Jr. Foundation")
 #run_single("Center on Budget and Policy Priorities")
 #run_single("blah blah blah")
+#run_single("Wartsila Energy Storage & Optimisation") #this breaks because of the ampersand
+#run_single("Kelly Restaurant Group")
+#run_single("Black Mountain Energy Storage")
+
+#get_all_tokens()
+#get_freq_dist()
