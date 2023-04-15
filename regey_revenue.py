@@ -60,10 +60,40 @@ def get_freq_dist():
 #=================================================================
 #main
 
+#returns dictionary with "org","url","rev_str","rev_num","match_score" fields when foundation=False
+#returns dictionary with "org","url","year","revenue","assets","liabilities","summed" fields when foundation=False
+#alternatively, when an error occours, there will be as many fields as possible, with an additional "error" field
 def search(driver, org, foundation):
     if foundation:
-        driver.get(f"https://www.google.com/search?q={org}+990+propublica")
-
+        results = google_search(driver, f"{org} 990 propublica", 10)
+        for result in results:
+            try:
+                link = result.find_element(by=By.TAG_NAME, value="a")
+            except NoSuchElementException:
+                continue
+            url = link.get_attribute("href")
+            if "propublica" in url:
+                driver.get(url)
+                publica_results_element = WebDriverWait(driver, 10).until(lambda x: x.find_element(by=By.CLASS_NAME, value="filings"))
+                publica_results = publica_results_element.find_elements(by=By.XPATH, value="*") #gets all direct children of an element
+                for publica_result in publica_results:
+                    id = publica_result.get_attribute("id")
+                    if "filing" in id:
+                        year = id[6:]
+                        rows = publica_result.find_elements(by=By.TAG_NAME, value="tr")
+                        for row in rows:
+                            elems = row.find_elements(by=By.XPATH, value="*")
+                            if len(elems) == 0:
+                                continue
+                            if elems[0].text == "Total Revenue":
+                                revenue = get_publica_revenue(elems[1].text)
+                            elif elems[0].text == "Total Assets":
+                                assets = get_publica_revenue(elems[1].text)
+                            elif elems[0].text == "Total Liabilities":
+                                liabilities = get_publica_revenue(elems[1].text)
+                        summed = round(revenue + assets - liabilities, 2)
+                        #TODO: grab name from the actual web page to confirm it's the correct company
+                        return {"org": org, "url": url, "year": year, "revenue": revenue, "assets": assets, "liabilities": liabilities, "summed": summed}
     else:
         results = google_search(driver, f"{org} annual revenue zoominfo", 10)
 
@@ -92,7 +122,7 @@ def search(driver, org, foundation):
                     rev_str = cur_rev_str
 
             result_infos.append({"org": org, "url": url, "rev_str": rev_str, "rev_num": rev_num})
-        
+
         dist = make_dist()
         best_result = None
         best_match_score = 0
@@ -105,7 +135,7 @@ def search(driver, org, foundation):
             zoom_org_tokens = get_org_tokens(zoom_org)
             org_tokens = get_org_tokens(org)
             match_score = get_match_score(dist, org_tokens, zoom_org_tokens)
-            print(f"{org_tokens}, {zoom_org_tokens}, {match_score}")
+            #print(f"{org_tokens}, {zoom_org}, {zoom_org_tokens}, {match_score}")
             if match_score > best_match_score:
                 best_match_score = match_score
                 best_result = result_info
@@ -144,14 +174,8 @@ def run(filter="", limit=math.inf):
                 if i > limit:
                     break
 
-                if not foundation:
-                    result = search(driver, org, False)
-                    if not result["url"] == "":
-                        csvwriter.writerow([org, result["url"], result["revenue"]])
-                    else:
-                        csvwriter.writerow([org, "ERROR: no zoom results"])
-                else:
-                    csvwriter.writerow([org, "ERROR: foundation"])
+                print(search(driver, org, foundation))
+                #csvwriter.writerow([...])
 
 #=================================================================
 #revenue regexes
@@ -230,20 +254,29 @@ def make_dist():
         for row in csvreader:
             dist[row[0]] = int(row[1])
     return dist
+
+def get_publica_revenue(rev_string):
+    rev_string = rev_string[1:]
+    rev_string = re.sub(",", "", rev_string)
+    return round(float(rev_string), 2)
 #=================================================================
 #scratch
 
 #run(limit=20)
-#run(filter="company", limit=200)
+#run(filter="company", limit=20)
+
 #run(filter="foundation", limit=20)
 
 #run_single("AmWell")
+#run_single("Abell-Hanger Foundation")
 #run_single("Josiah Macy Jr. Foundation")
 #run_single("Center on Budget and Policy Priorities")
 #run_single("blah blah blah")
 #run_single("Wartsila Energy Storage & Optimisation") #this breaks because of the ampersand
 #run_single("Kelly Restaurant Group")
 #run_single("Black Mountain Energy Storage")
+
+run_single("Ed Foundation")
 
 #get_all_tokens()
 #get_freq_dist()
