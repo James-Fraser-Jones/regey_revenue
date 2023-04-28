@@ -161,6 +161,7 @@ def run_single(chosen_org):
             org = row[0]
             if org == chosen_org:
                 driver = get_driver()
+                google_close_bullshit_popups(driver)
                 foundation = row[1] == "TRUE"
                 if foundation:
                     print(search_foundation(driver, chosen_org))
@@ -169,30 +170,9 @@ def run_single(chosen_org):
                 return
     print("ERROR: org not found")
 
-# def run(filter="", limit=math.inf):
-#     driver = get_driver(headless=True)
-
-#     with open('regey_data.csv', newline='') as csvfilein:
-#         csvreader = csv.reader(csvfilein)
-#         with open('regey_data_out.csv', 'w', newline='') as csvfileout:
-#             csvwriter = csv.writer(csvfileout)
-#             i = 0
-#             for row in csvreader:
-
-#                 org = row[0]
-#                 foundation = row[1] == "TRUE"
-
-#                 if filter != "" and (filter == "foundation") != foundation:
-#                     continue
-#                 i += 1
-#                 if i > limit:
-#                     break
-
-#                 print(search(driver, org, foundation))
-#                 #csvwriter.writerow([...])
-
 def run_companies():
     driver = get_driver(headless=True)
+    google_close_bullshit_popups(driver)
 
     #get list of already done companies
     done = []
@@ -212,8 +192,8 @@ def run_companies():
 
                     try:
                         result = search_company(driver, org)
-                    except:
-                        print(f"{org} caused exception")
+                    except Exception as e:
+                        print(f"{org} caused exception: \n{e}")
                         return
                     
                     if not "error" in result:
@@ -226,6 +206,7 @@ def run_companies():
                     
 def run_foundations():
     driver = get_driver(headless=True)
+    google_close_bullshit_popups(driver)
 
     #get list of already done companies
     done = []
@@ -258,7 +239,7 @@ def run_foundations():
                         print([org,result["error"]])
                         return
 #=================================================================
-#revenue regexes
+#regexes
 
 #https://regexr.com/7bh2j
 #https://stackoverflow.com/questions/3512471/what-is-a-non-capturing-group-in-regular-expressions
@@ -273,11 +254,14 @@ def run_foundations():
 
 rev_regex = re.compile(r'<?\$\d+(?:\.\d+)? ?(?:K|M|B)')
 rev_regex_grouped = re.compile(r'(<?)\$(\d+(?:\.\d+)?) ?(K|M|B)')
-
 org_token_regex = re.compile(r'\w+')
+foundation_regex = re.compile(r' foundation| fund| trust')
 
 #=================================================================
 #utils
+
+def is_foundation(org):
+    return len(foundation_regex.findall(org)) > 0
 
 def get_driver(headless=False):
     options = Options()
@@ -285,12 +269,28 @@ def get_driver(headless=False):
     driver = webdriver.Firefox(options=options, service=FirefoxService(GeckoDriverManager().install()))
     return driver
 
+def google_close_bullshit_popups(driver):
+    driver.get("https://www.google.com/")
+    try:
+        accept_all = driver.find_element(by=By.ID, value="L2AGLb")
+        accept_all.click()
+    except:
+        pass
+
 #performs a google search and waits for results before returning them
 def google_search(driver, search_string, wait):
     driver.get("https://www.google.com/")
+
+    # accept_all = driver.find_element(by=By.ID, value="L2AGLb")
+    # accept_all.click()
+
     search_box = driver.find_element(by=By.ID, value="APjFqb")
     search_box.send_keys(search_string)
-    search_box.send_keys(Keys.ENTER)
+    #search_box.send_keys(Keys.ENTER)
+
+    google_search = driver.find_element(by=By.NAME, value="btnK")
+    google_search.submit()
+
     try:
         results_element = WebDriverWait(driver, wait).until(lambda x: x.find_element(by=By.ID, value="rso"))
         results = results_element.find_elements(by=By.XPATH, value="*") #gets all direct children of an element
@@ -341,10 +341,6 @@ def get_publica_revenue(rev_string):
 #=================================================================
 #scratch
 
-#run(limit=20)
-#run(filter="company", limit=20)
-#run(filter="foundation", limit=20)
-
 #run_single("AmWell")
 #run_single("Abell-Hanger Foundation")
 #run_single("Josiah Macy Jr. Foundation")
@@ -355,11 +351,11 @@ def get_publica_revenue(rev_string):
 #run_single("Black Mountain Energy Storage")
 #run_single("Ed Foundation")
 
+#############################################
+
 #get_all_tokens()
 #get_freq_dist()
 
-#############################################
-
 #run_companies()
-run_foundations()
-#run_single("Moore Foundation")
+#run_foundations()
+#run_single("CPR Foundation")
