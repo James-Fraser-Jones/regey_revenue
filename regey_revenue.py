@@ -24,41 +24,39 @@ def csv_test():
             for row in csvreader:
                 csvwriter.writerow([row[0], row[1]])
 
-#this was used to generate "regey_tokens.csv" in order to create a frequency distribution 
-#this distribution was then used to create an effective token_filter_list
-def get_all_tokens():
+#used to remove all but first column of regey_data.csv     
+def clean_data():
+    orgs = []
     with open('regey_data.csv', newline='') as csvfilein:
         csvreader = csv.reader(csvfilein)
-        with open('regey_tokens.csv', 'w', newline='') as csvfileout:
-            csvwriter = csv.writer(csvfileout)
-            for row in csvreader:
-                tokens = get_org_tokens(row[0])
-                for token in tokens:
-                    csvwriter.writerow([token])
+        for row in csvreader:
+            orgs.append(row[0])
+    with open('regey_data.csv', 'w', newline='') as csvfileout:
+        csvwriter = csv.writer(csvfileout)
+        for org in orgs:
+            csvwriter.writerow([org])
+#=================================================================
+#main
 
 #used to generate "regey_dist.csv" file with frequency distribution of tokens
 def get_freq_dist():
     dist = {}
-    with open('regey_tokens.csv', newline='') as csvfilein:
+    with open('regey_data.csv', newline='') as csvfilein:
         csvreader = csv.reader(csvfilein)
         for row in csvreader:
-            if len(row) == 0:
-                continue
-            token = row[0]
-            if token == "":
-                continue
-            if token in dist:
-                dist[token] += 1
-            else:
-                dist[token] = 1
+            tokens = get_org_tokens(row[0])
+            for token in tokens:
+                if token == "":
+                    continue
+                if token in dist:
+                    dist[token] += 1
+                else:
+                    dist[token] = 1
     with open('regey_dist.csv', 'w', newline='') as csvfileout:
         csvwriter = csv.writer(csvfileout)
         for token in sorted(dist, key=dist.get, reverse=True):
             count = dist[token]
             csvwriter.writerow([token, count])
-        
-#=================================================================
-#main
 
 #returns dictionary with "org","url","rev_str","rev_num","match_score" fields
 def search_company(driver, org):
@@ -162,7 +160,7 @@ def run_single(chosen_org):
             if org == chosen_org:
                 driver = get_driver()
                 google_close_bullshit_popups(driver)
-                foundation = row[1] == "TRUE"
+                foundation = is_foundation(org)
                 if foundation:
                     print(search_foundation(driver, chosen_org))
                 else:
@@ -187,7 +185,7 @@ def run_companies():
             csvwriter = csv.writer(csvfileout)
             for row in csvreader:
                 org = row[0]
-                foundation = row[1] == "TRUE"
+                foundation = is_foundation(org)
                 if (not foundation) and (not org in done):
 
                     try:
@@ -221,7 +219,7 @@ def run_foundations():
             csvwriter = csv.writer(csvfileout)
             for row in csvreader:
                 org = row[0]
-                foundation = row[1] == "TRUE"
+                foundation = is_foundation(org)
                 if foundation and (not org in done):
 
                     try:
@@ -261,7 +259,7 @@ foundation_regex = re.compile(r' foundation| fund| trust')
 #utils
 
 def is_foundation(org):
-    return len(foundation_regex.findall(org)) > 0
+    return len(foundation_regex.findall(org.lower())) > 0
 
 def get_driver(headless=False):
     options = Options()
@@ -353,9 +351,8 @@ def get_publica_revenue(rev_string):
 
 #############################################
 
-#get_all_tokens()
-#get_freq_dist()
-
 #run_companies()
 #run_foundations()
 #run_single("CPR Foundation")
+
+#get_freq_dist()
