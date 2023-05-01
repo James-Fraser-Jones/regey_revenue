@@ -1,3 +1,19 @@
+#requires python 3.11.3
+
+#https://learn.microsoft.com/en-us/windows/python/web-frameworks
+#https://iohk.zendesk.com/hc/en-us/articles/16724475448473-Install-Python-3-11-on-ubuntu
+#https://stackoverflow.com/a/71726397
+
+# environments:
+#      create virtual environment: python3.11 -m venv .venv
+#      active virtual environment: source .venv/bin/activate
+#  deactivate virtual environment: deactivate
+# make sure venv environment is selected in vscode as well (bottom right corner button)
+
+# install commands (after activating environment):
+# pip install selenium
+# pip install webdriver-manager
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -5,7 +21,6 @@ from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.firefox.service import Service as FirefoxService
 from selenium.webdriver.firefox.options import Options
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
-
 from webdriver_manager.firefox import GeckoDriverManager
 
 import csv
@@ -130,11 +145,11 @@ def search_foundation(driver, org):
                             assets = get_publica_revenue(elems[1].text)
                         elif elems[0].text == "Total Liabilities":
                             liabilities = get_publica_revenue(elems[1].text)
-                    if revenue and assets and liabilities:
+                    if revenue is not None and assets is not None and liabilities is not None:
                         summed = round(revenue + assets - liabilities, 2)
                         category = get_category(summed)
                         return {"org": org, "url": url, "name": name, "summed": summed, "year": year, "revenue": revenue, "category": category, "assets": assets, "liabilities": liabilities}
-            raise Exception(f"Could not find filing with revenue, assets and liabilities\nurl: {url}\nname:{name}")
+            raise Exception(f"Could not find filing with revenue, assets and liabilities\nurl: {url}\nname: {name}")
     raise Exception("Could not find propublica link")
 
 def run(foundations=False):
@@ -159,7 +174,7 @@ def run(foundations=False):
                     foundation = is_foundation(org)
                     if (foundation == foundations) and (not org in done):
                         try:
-                            result = search_foundation if foundations else search_company(driver, org)
+                            result = search_foundation(driver, org) if foundations else search_company(driver, org)
                         except Exception as e:
                             print(f"{org} caused exception: \n{e}")
                             return
@@ -341,4 +356,4 @@ def get_publica_revenue(rev_string):
 
 #run()
 #run(foundations=True)
-#run_single("CPR Foundation")
+#run_single("Neubauer Foundation")
