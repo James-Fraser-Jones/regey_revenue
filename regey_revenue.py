@@ -10,10 +10,9 @@ from webdriver_manager.firefox import GeckoDriverManager
 
 import csv
 import re
-import math
 
 #=================================================================
-#examples and now unsused code
+#csv reformatting
 
 #example usage of reading and writing csv data from and to files
 def csv_test():
@@ -26,39 +25,22 @@ def csv_test():
 
 #used to remove all but first column of regey_data.csv     
 def clean_data():
-    orgs = []
-    with open('regey_data.csv', newline='') as csvfilein:
-        csvreader = csv.reader(csvfilein)
-        for row in csvreader:
-            orgs.append(row[0])
-    with open('regey_data.csv', 'w', newline='') as csvfileout:
-        csvwriter = csv.writer(csvfileout)
-        for org in orgs:
-            csvwriter.writerow([org])
+    map_csv(lambda row: [row[0]], "regey_data")
+
+#reformatting   org,url,rev_str,rev_num,match_score
+#to:            org,url,rev_str,rev_num,match_score,corrected,category
+def reformat_companies():
+    map_csv(lambda row: [row[0],row[1],row[2],row[3],row[4],"","" if row[3] == "" else get_category(row[3])], "regey_data_companies")
+
+#reformatting   org,url,name,year,revenue,assets,liabilities,summed
+#to:            org,url,name,summed,year,revenue,category,assets,liabilities
+def reformat_foundations():
+    map_csv(lambda row: [row[0],row[1],row[2],row[7],row[3],row[4],"" if row[7] == "" else get_category(row[7]),row[5],row[6]], "regey_data_foundations")
+
 #=================================================================
 #main
 
-#used to generate "regey_dist.csv" file with frequency distribution of tokens
-def get_freq_dist():
-    dist = {}
-    with open('regey_data.csv', newline='') as csvfilein:
-        csvreader = csv.reader(csvfilein)
-        for row in csvreader:
-            tokens = get_org_tokens(row[0])
-            for token in tokens:
-                if token == "":
-                    continue
-                if token in dist:
-                    dist[token] += 1
-                else:
-                    dist[token] = 1
-    with open('regey_dist.csv', 'w', newline='') as csvfileout:
-        csvwriter = csv.writer(csvfileout)
-        for token in sorted(dist, key=dist.get, reverse=True):
-            count = dist[token]
-            csvwriter.writerow([token, count])
-
-#returns dictionary with "org","url","rev_str","rev_num","match_score" fields
+#returns dictionary with org,url,rev_str,rev_num,match_score,corrected,category fields
 def search_company(driver, org):
     results = google_search(driver, f"{org} annual revenue zoominfo", 10)
     result_infos = []
@@ -87,7 +69,7 @@ def search_company(driver, org):
 
         result_infos.append({"org": org, "url": url, "rev_str": rev_str, "rev_num": rev_num})
 
-    dist = make_dist()
+    dist = get_dist()
     best_result = result_infos[0]
     best_match_score = 0
     for result_info in result_infos:
@@ -99,15 +81,17 @@ def search_company(driver, org):
         zoom_org_tokens = get_org_tokens(zoom_org)
         org_tokens = get_org_tokens(org)
         match_score = get_match_score(dist, org_tokens, zoom_org_tokens)
-        #print(f"{org_tokens}, {zoom_org}, {zoom_org_tokens}, {match_score}")
+
         if match_score > best_match_score:
             best_match_score = match_score
             best_result = result_info
     
     best_result["match_score"] = best_match_score
+    best_result["corrected"] = ""
+    best_result["category"] = get_category(best_result["rev_num"])
     return best_result
 
-#returns dictionary with "org","url","name","year","revenue","assets","liabilities","summed" fields
+#returns dictionary with org,url,name,summed,year,revenue,category,assets,liabilities fields
 def search_foundation(driver, org):
     results = google_search(driver, f"{org} 990 propublica", 10)
     for result in results:
@@ -148,94 +132,64 @@ def search_foundation(driver, org):
                             liabilities = get_publica_revenue(elems[1].text)
                     if revenue and assets and liabilities:
                         summed = round(revenue + assets - liabilities, 2)
-                        return {"org": org, "url": url, "name": name, "year": year, "revenue": revenue, "assets": assets, "liabilities": liabilities, "summed": summed}
-            return {"error":"could not find filing with revenue, assets and liabilities"}
-    return {"error":"could not find propublica link"}
+                        category = get_category(summed)
+                        return {"org": org, "url": url, "name": name, "summed": summed, "year": year, "revenue": revenue, "category": category, "assets": assets, "liabilities": liabilities}
+            raise Exception(f"Could not find filing with revenue, assets and liabilities\nurl: {url}\nname:{name}")
+    raise Exception("Could not find propublica link")
 
-def run_single(chosen_org):
-    with open('regey_data.csv', newline='') as csvfilein:
-        csvreader = csv.reader(csvfilein)
-        for row in csvreader:
-            org = row[0]
-            if org == chosen_org:
-                driver = get_driver()
-                google_close_bullshit_popups(driver)
-                foundation = is_foundation(org)
-                if foundation:
-                    print(search_foundation(driver, chosen_org))
-                else:
-                    print(search_company(driver, chosen_org))
-                return
-    print("ERROR: org not found")
-
-def run_companies():
+def run(foundations=False):
     driver = get_driver(headless=True)
-    google_close_bullshit_popups(driver)
 
     #get list of already done companies
     done = []
-    with open("regey_data_companies.csv", newline='') as csvfilein:
+    out_file = f"regey_data_{'foundations' if foundations else 'companies'}"
+    with open(f"{out_file}.csv", newline='') as csvfilein:
         csvreader = csv.reader(csvfilein)
         for row in csvreader:
             done.append(row[0])
 
     with open('regey_data.csv', newline='') as csvfilein:
         csvreader = csv.reader(csvfilein)
-        with open('regey_data_companies.csv', 'a', newline='') as csvfileout:
-            csvwriter = csv.writer(csvfileout)
-            for row in csvreader:
-                org = row[0]
-                foundation = is_foundation(org)
-                if (not foundation) and (not org in done):
-
-                    try:
-                        result = search_company(driver, org)
-                    except Exception as e:
-                        print(f"{org} caused exception: \n{e}")
-                        return
-                    
-                    if not "error" in result:
-                        entry = [result["org"],result["url"],result["rev_str"],result["rev_num"],result["match_score"]]
+        with open(f"{out_file}.csv", 'a', newline='') as csvfileout:
+            with open(f"{out_file}_new.csv", 'a', newline='') as csvfileoutnew:
+                csvwriter = csv.writer(csvfileout)
+                csvwriternew = csv.writer(csvfileoutnew)
+                for row in csvreader:
+                    org = row[0]
+                    foundation = is_foundation(org)
+                    if (foundation == foundations) and (not org in done):
+                        try:
+                            result = search_foundation if foundations else search_company(driver, org)
+                        except Exception as e:
+                            print(f"{org} caused exception: \n{e}")
+                            return
+                        entry = list(result.values())
                         print(entry)
                         csvwriter.writerow(entry)
-                    else:
-                        print([org,result["error"]])
-                        return
-                    
-def run_foundations():
-    driver = get_driver(headless=True)
-    google_close_bullshit_popups(driver)
+                        csvwriternew.writerow(entry)
 
-    #get list of already done companies
-    done = []
-    with open("regey_data_foundations.csv", newline='') as csvfilein:
-        csvreader = csv.reader(csvfilein)
-        for row in csvreader:
-            done.append(row[0])
+def run_single(org, check=True):
+    driver = get_driver()
 
-    with open('regey_data.csv', newline='') as csvfilein:
-        csvreader = csv.reader(csvfilein)
-        with open('regey_data_foundations.csv', 'a', newline='') as csvfileout:
-            csvwriter = csv.writer(csvfileout)
+    if check:
+        found = False
+        with open('regey_data.csv', newline='') as csvfilein:
+            csvreader = csv.reader(csvfilein)
             for row in csvreader:
-                org = row[0]
-                foundation = is_foundation(org)
-                if foundation and (not org in done):
+                row_org = row[0]
+                if org == row_org:
+                    found = True
+                    break
+        if not found:
+            raise Exception(f"Org not found in file: {org}")
+    
+    foundation = is_foundation(org)
+    if foundation:
+        print(search_foundation(driver, org))
+    else:
+        print(search_company(driver, org))
+    return
 
-                    try:
-                        result = search_foundation(driver, org)
-                    except:
-                        print(f"{org} caused exception")
-                        return
-                    
-                    if not "error" in result:
-                        #"org","url","name","year","revenue","assets","liabilities","summed"
-                        entry = [result["org"],result["url"],result["name"],result["year"],result["revenue"],result["assets"],result["liabilities"],result["summed"]]
-                        print(entry)
-                        csvwriter.writerow(entry)
-                    else:
-                        print([org,result["error"]])
-                        return
 #=================================================================
 #regexes
 
@@ -254,46 +208,82 @@ rev_regex = re.compile(r'<?\$\d+(?:\.\d+)? ?(?:K|M|B)')
 rev_regex_grouped = re.compile(r'(<?)\$(\d+(?:\.\d+)?) ?(K|M|B)')
 org_token_regex = re.compile(r'\w+')
 foundation_regex = re.compile(r' foundation| fund| trust')
+publica_rev_regex = re.compile(r'\$|,')
 
 #=================================================================
 #utils
 
+#maps a function over rows from a csv file (or elements if specified)
+def map_csv(func, file, elements=False, debug=False):
+    rows = []
+    with open(f"{file}.csv", newline='') as csvfilein:
+        csvreader = csv.reader(csvfilein)
+        for row in csvreader:
+            rows.append(row)
+
+    def debug_func(x):
+        print(x)
+        return func(x)
+    real_func = debug_func if debug else func
+
+    if elements:
+        new_rows = list(map(lambda row : map(real_func, row), rows))
+    else:
+        new_rows = list(map(real_func, rows))
+
+    with open(f"{file}_map.csv", 'w', newline='') as csvfileout:
+        csvwriter = csv.writer(csvfileout)
+        for new_row in new_rows:
+            csvwriter.writerow(new_row)
+
+def get_category(rev):
+    rev = float(rev)
+    if rev >= 500000000:
+        category = "$500M+"
+    elif rev >= 100000000:
+        category = "$100M - $500M"
+    elif rev >= 50000000:
+        category = "$50M - $100M"
+    elif rev >= 10000000:
+        category = "$10M - $50M"
+    elif rev >= 5000000:
+        category = "$5M - $10M"
+    elif rev >= 1000000:
+        category = "$1M - $5M"
+    else:
+        category = "Under $1 Million"
+    return category
+
 def is_foundation(org):
     return len(foundation_regex.findall(org.lower())) > 0
 
+#gets webdriver
 def get_driver(headless=False):
     options = Options()
-    options.headless = headless
+    if headless:
+        options.add_argument('--headless')
     driver = webdriver.Firefox(options=options, service=FirefoxService(GeckoDriverManager().install()))
     return driver
 
-def google_close_bullshit_popups(driver):
+#performs a google search and waits for results before returning them
+def google_search(driver, search_string, wait):
     driver.get("https://www.google.com/")
+
+    #remove annoying popup
     try:
         accept_all = driver.find_element(by=By.ID, value="L2AGLb")
         accept_all.click()
     except:
         pass
 
-#performs a google search and waits for results before returning them
-def google_search(driver, search_string, wait):
-    driver.get("https://www.google.com/")
-
-    # accept_all = driver.find_element(by=By.ID, value="L2AGLb")
-    # accept_all.click()
-
     search_box = driver.find_element(by=By.ID, value="APjFqb")
     search_box.send_keys(search_string)
-    #search_box.send_keys(Keys.ENTER)
 
     google_search = driver.find_element(by=By.NAME, value="btnK")
-    google_search.submit()
+    google_search.submit() #submit instead of click is necessary for some reason
 
-    try:
-        results_element = WebDriverWait(driver, wait).until(lambda x: x.find_element(by=By.ID, value="rso"))
-        results = results_element.find_elements(by=By.XPATH, value="*") #gets all direct children of an element
-    except TimeoutException:
-        results = []
+    results_element = WebDriverWait(driver, wait).until(lambda x: x.find_element(by=By.ID, value="rso"))
+    results = results_element.find_elements(by=By.XPATH, value="*") #gets all direct children of an element
     return results
 
 #produces revenue number from rev_group regex match
@@ -316,43 +306,39 @@ def get_org_tokens(org):
     tokens = org_token_regex.findall(lower_org)
     return tokens
 
-#produces match score by sum totalling the scores (based on inverse frequency from distribution) of all token matches
-def get_match_score(dist, org_tokens, zoom_org_tokens):
-    match_score = 0 
-    for org_token in org_tokens:
-        if org_token in zoom_org_tokens:
-            match_score += 98 - dist[org_token]
-    return match_score
-
-#turns "regey_dist.csv" into lookup table (i.e. a dictionary) and returns it
-def make_dist():
+#gets frequency distribution of tokens as a dictionary, based on regey_data.csv
+def get_dist():
     dist = {}
-    with open('regey_dist.csv', newline='') as csvfilein:
+    with open('regey_data.csv', newline='') as csvfilein:
         csvreader = csv.reader(csvfilein)
         for row in csvreader:
-            dist[row[0]] = int(row[1])
-    return dist
+            tokens = get_org_tokens(row[0])
+            for token in tokens:
+                if token == "":
+                    continue
+                if token in dist:
+                    dist[token] += 1
+                else:
+                    dist[token] = 1
+    return {k: v for k, v in sorted(dist.items(), key=lambda item: item[1], reverse=True)}
 
+#produces match score by sum totalling the scores (based on inverse frequency from distribution) of all token matches
+def get_match_score(dist, org_tokens, zoom_org_tokens):
+    match_score = 0
+    max_freq = list(dist.values())[0]
+    for org_token in org_tokens:
+        if org_token in zoom_org_tokens:
+            match_score += max_freq - dist[org_token]
+    return match_score
+
+#remove dollars and commas
 def get_publica_revenue(rev_string):
-    rev_string = re.sub(r"\$|,", "", rev_string) #remove dollars and commas
+    rev_string = publica_rev_regex.sub("", rev_string) 
     return round(float(rev_string), 2)
+
 #=================================================================
 #scratch
 
-#run_single("AmWell")
-#run_single("Abell-Hanger Foundation")
-#run_single("Josiah Macy Jr. Foundation")
-#run_single("Center on Budget and Policy Priorities")
-#run_single("blah blah blah")
-#run_single("Wartsila Energy Storage & Optimisation") #this breaks because of the ampersand
-#run_single("Kelly Restaurant Group")
-#run_single("Black Mountain Energy Storage")
-#run_single("Ed Foundation")
-
-#############################################
-
-#run_companies()
-#run_foundations()
+#run()
+#run(foundations=True)
 #run_single("CPR Foundation")
-
-#get_freq_dist()
