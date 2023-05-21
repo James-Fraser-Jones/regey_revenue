@@ -83,7 +83,8 @@ def search_company(driver, org):
                 rev_str = cur_rev_str
 
         result_infos.append({"org": org, "url": url, "rev_str": rev_str, "rev_num": rev_num})
-
+    if len(result_infos) == 0:
+        raise Exception("Could not find any viable results (those containing a link and at least 1 revenue string)")
     dist = get_dist()
     best_result = result_infos[0]
     best_match_score = 0
@@ -115,14 +116,12 @@ def search_foundation(driver, org):
         except NoSuchElementException:
             continue
         url = link.get_attribute("href")
-        if "propublica" in url:
-
-            driver.get(url)
-
-            url_tokens = url.split("/")
+        url_tokens = url.split("/")
+        if "propublica" in url_tokens[2] and len(url_tokens) >= 6:
             if len(url_tokens) > 6:
-                url = ("/").join(url_tokens[:-2])
-                driver.get(url)
+                url = ("/").join(url_tokens[:6])
+            
+            driver.get(url)
             
             publica_results_element = WebDriverWait(driver, 10).until(lambda x: x.find_element(by=By.CLASS_NAME, value="filings"))
             publica_results = publica_results_element.find_elements(by=By.XPATH, value="*") #gets all direct children of an element
@@ -150,7 +149,7 @@ def search_foundation(driver, org):
                         category = get_category(summed)
                         return {"org": org, "url": url, "name": name, "summed": summed, "year": year, "revenue": revenue, "category": category, "assets": assets, "liabilities": liabilities}
             raise Exception(f"Could not find filing with revenue, assets and liabilities\nurl: {url}\nname: {name}")
-    raise Exception("Could not find propublica link")
+    raise Exception("Could not find valid propublica link")
 
 def run(foundations=False):
     driver = get_driver(headless=True)
@@ -166,22 +165,19 @@ def run(foundations=False):
     with open('regey_data.csv', newline='') as csvfilein:
         csvreader = csv.reader(csvfilein)
         with open(f"{out_file}.csv", 'a', newline='') as csvfileout:
-            with open(f"{out_file}_new.csv", 'a', newline='') as csvfileoutnew:
-                csvwriter = csv.writer(csvfileout)
-                csvwriternew = csv.writer(csvfileoutnew)
-                for row in csvreader:
-                    org = row[0]
-                    foundation = is_foundation(org)
-                    if (foundation == foundations) and (not org in done):
-                        try:
-                            result = search_foundation(driver, org) if foundations else search_company(driver, org)
-                        except Exception as e:
-                            print(f"{org} caused exception: \n{e}")
-                            return
-                        entry = list(result.values())
-                        print(entry)
-                        csvwriter.writerow(entry)
-                        csvwriternew.writerow(entry)
+            csvwriter = csv.writer(csvfileout)
+            for row in csvreader:
+                org = row[0]
+                foundation = is_foundation(org)
+                if (foundation == foundations) and (not org in done):
+                    try:
+                        result = search_foundation(driver, org) if foundations else search_company(driver, org)
+                    except Exception as e:
+                        print(f"{org} caused exception: \n{e}")
+                        return
+                    entry = list(result.values())
+                    print(entry)
+                    csvwriter.writerow(entry)
 
 def run_single(org, check=True):
     driver = get_driver()
