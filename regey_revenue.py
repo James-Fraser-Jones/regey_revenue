@@ -125,7 +125,7 @@ def search_foundation(driver, org):
             
             publica_results_element = WebDriverWait(driver, 10).until(lambda x: x.find_element(by=By.CLASS_NAME, value="filings"))
             publica_results = publica_results_element.find_elements(by=By.XPATH, value="*") #gets all direct children of an element
-            name = driver.find_elements(by=By.TAG_NAME, value="h1")[1].text
+            name = driver.find_elements(by=By.TAG_NAME, value="h1")[0].text
             for publica_result in publica_results:
                 id = publica_result.get_attribute("id")
                 if "filing" in id:
@@ -174,6 +174,7 @@ def run(foundations=False):
                         result = search_foundation(driver, org) if foundations else search_company(driver, org)
                     except Exception as e:
                         print(f"{org} caused exception: \n{e}")
+                        run_single(org, check=False)
                         return
                     entry = list(result.values())
                     print(entry)
@@ -350,6 +351,4 @@ def get_publica_revenue(rev_string):
 #=================================================================
 #scratch
 
-#run()
-#run(foundations=True)
-#run_single("Neubauer Foundation")
+run(foundations=True)
