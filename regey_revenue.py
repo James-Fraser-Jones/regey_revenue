@@ -123,27 +123,34 @@ def search_foundation(driver, org):
             
             driver.get(url)
             
-            publica_results_element = WebDriverWait(driver, 10).until(lambda x: x.find_element(by=By.CLASS_NAME, value="filings"))
+            publica_results_element = WebDriverWait(driver, 10).until(lambda x: x.find_element(by=By.CLASS_NAME, value="filing-periods"))
             publica_results = publica_results_element.find_elements(by=By.XPATH, value="*") #gets all direct children of an element
             name = driver.find_elements(by=By.TAG_NAME, value="h1")[0].text
             for publica_result in publica_results:
                 id = publica_result.get_attribute("id")
                 if "filing" in id:
                     year = id[6:]
-                    rows = publica_result.find_elements(by=By.TAG_NAME, value="tr")
                     revenue = None
                     assets = None
                     liabilities = None
+
+                    try:
+                        summary = publica_result.find_element(by=By.CLASS_NAME, value="extract-summary")
+                    except NoSuchElementException:
+                        continue
+
+                    rows = summary.find_elements(by=By.CLASS_NAME, value="row-summary__item")
                     for row in rows:
                         elems = row.find_elements(by=By.XPATH, value="*")
                         if len(elems) == 0:
                             continue
-                        if elems[0].text == "Total Revenue":
+                        if elems[0].text == "Net Income":
                             revenue = get_publica_revenue(elems[1].text)
-                        elif elems[0].text == "Total Assets":
+                        elif elems[0].text == "Net Assets":
                             assets = get_publica_revenue(elems[1].text)
-                        elif elems[0].text == "Total Liabilities":
+                        elif elems[0].text == "Expenses":
                             liabilities = get_publica_revenue(elems[1].text)
+
                     if revenue is not None and assets is not None and liabilities is not None:
                         summed = round(revenue + assets - liabilities, 2)
                         category = get_category(summed)
@@ -351,4 +358,4 @@ def get_publica_revenue(rev_string):
 #=================================================================
 #scratch
 
-run(foundations=True)
+run(foundations=False)
